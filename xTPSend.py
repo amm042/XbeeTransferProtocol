@@ -141,7 +141,8 @@ class XTPClient():
             if txcnt == 0:
                 logging.warn("TX complete due to no packets to send")
                 return True # must have worked.
-
+            else:
+                logging.info("Sent {} fragments".format(txcnt))
             # block until all packets go out...
             self.xbee.flush()
 
@@ -161,7 +162,9 @@ class XTPClient():
                     continue
 
                 if self.have_acks.wait(self.xbee._timeout.total_seconds()):
-                    logging.debug("Got acks. [all=={}]".format(self.acks.all()))
+                    logging.info("Got acks. [{} of {}]".format(
+                        self.acks.count(),
+                        self.acks.length()))
                     got_acks = True
                     tm = datetime.datetime.now() - start
                     if self.acks.all():
@@ -191,7 +194,7 @@ class XTPClient():
             with open(filename, 'rb') as f:
 
                 while pos == 0 or len(data) > 0:
-                    data = f.read(6*1024)
+                    data = f.read(8*1024)
 
                     if len(data) > 0:
                         success = False

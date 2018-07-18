@@ -38,7 +38,7 @@ def make_frags(data, threshold=121, encode = True):
         121 will generate a max packet length of 127 bytes.
         returns generated fragments with appropriate headers.
        '''
-    print("make_frags, threshold = {}".format(threshold))
+    #print("make_frags, threshold = {}".format(threshold))
     at=0
     frag_num =0
     # make total frags the 0-based frag number of the last fragment,
