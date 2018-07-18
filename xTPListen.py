@@ -180,7 +180,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
 
     p.add_argument("portstr", help="pylink style port string eg: /dev/ttyUSB0:38400:8N1")
-    p.add_argument("store", help="path to storage root eg: ./store")
+    p.add_argument("store", help="path to storage root, recieved files will be put here eg: ./store")
     p.add_argument("-d", "--debug", help="logging debug level",
                     choices=['DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL'], default = 'INFO')
     p.add_argument("-x", "--xbee", help="XBee variant",
@@ -204,8 +204,15 @@ if __name__ == "__main__":
                            xcls[args.xbee],
                            xbeeCM= int(args.cm,16) if args.cm != None else 0)
 
-        xtpsvr.xbee.send_cmd("at", command=b'HP', parameter=b'\x03')
-        xtpsvr.xbee.send_cmd("at", command=b'PL', parameter=b'\x04')
+        if args.xbee == '900HP':
+            # HP = preamble id
+            xtpsvr.xbee.send_cmd("at", command=b'HP', parameter=b'\x03')
+
+            # PL = tx power level
+            # 0 = +7 dBm
+            # ...
+            # 4 = +24 dBm
+            xtpsvr.xbee.send_cmd("at", command=b'PL', parameter=b'\x04')
         xtpsvr.run_forever()
     finally:
         if xtpsvr != None:

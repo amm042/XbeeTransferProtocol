@@ -1,7 +1,7 @@
 '''
 quick and dirty fragmentation library.
 
-supports up to 2**16 fragments. 
+supports up to 2**16 fragments.
 
 uses a global buffer for decoding so you can only have one message
 in flight at a time, or fragments will get lost.
@@ -23,52 +23,52 @@ class Fragment():
         self.data = data
 
 
-def encode(frag_num, total_frags, crc, frag):        
+def encode(frag_num, total_frags, crc, frag):
     h = struct.pack(">BHHL", MAGIC, total_frags, frag_num, crc )
-    #print(h, frag)        
+    #print(h, frag)
     return h + frag
-def decode(frag):    
-     # 0   1 2   3 4   4 5 6 7      
+def decode(frag):
+     # 0   1 2   3 4   4 5 6 7
     m, tf, cf, crc = struct.unpack(">BHHL", frag[0:9])
     #print(m, tf, cf, crc)
     return m, tf, cf, crc, frag[9:]
 def make_frags(data, threshold=121, encode = True):
-    '''given some data (binary string) add the fragmentation header and 
-        fragment if necessary. Adds 6 bytes of overhead, so threshold of 
+    '''given some data (binary string) add the fragmentation header and
+        fragment if necessary. Adds 6 bytes of overhead, so threshold of
         121 will generate a max packet length of 127 bytes.
-        returns generated fragments with appropriate headers.    
-       '''   
-    
+        returns generated fragments with appropriate headers.
+       '''
+    print("make_frags, threshold = {}".format(threshold))
     at=0
     frag_num =0
-    # make total frags the 0-based frag number of the last fragment, 
+    # make total frags the 0-based frag number of the last fragment,
     # so it is actually total_frags - 1...
     total_frags = math.floor(len(data) / float(threshold))
-    crc = zlib.crc32(data) 
+    crc = zlib.crc32(data)
     #print('crc is ', crc)
     if total_frags > 0xffff:
         raise Exception("data too large for this format ({} is too many fragments)!".format(total_frags))
     while at<len(data):
-        frag_data = data[at:at+threshold] 
+        frag_data = data[at:at+threshold]
         at += len(frag_data)
         if encode:
             yield encode(frag_num, total_frags, crc, frag_data)
         else:
             yield Fragment(frag_num, total_frags+1, crc, frag_data)
-            
+
         frag_num += 1
-        
-frag_buf = {} 
+
+frag_buf = {}
 def receive_frag(frag):
     global frag_buf
-    
+
     magic, total_frags, this_frag, crc, frag_data = decode(frag)
     #print("rcv ", total_frags,this_frag, crc, frag_data)
     if magic != MAGIC:
         return None
     frag_buf[this_frag] = (crc, frag_data)
-    
-    if this_frag == total_frags: 
+
+    if this_frag == total_frags:
         # attempt to reassemble
         r = b''
         for i in range(total_frags+1):
@@ -76,7 +76,7 @@ def receive_frag(frag):
         mycrc = zlib.crc32(r)
         if mycrc == crc:
             return r
-        else:            
+        else:
             #print('got crc {:x} != {:x}'.format(mycrc, crc))
             raise CrcError()
     return None
@@ -88,19 +88,19 @@ if __name__=="__main__":
     rslt = None
     for frag in make_frags(s):
         rslt = receive_frag(frag)
-        
+
     assert rslt == s, "got {}".format(rslt)
-    
-        
+
+
     s=b'''Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis commodo sodales sem, sed ultrices lacus facilisis vitae. Curabitur sapien neque, aliquet vitae euismod ac, ornare egestas urna. Curabitur convallis mauris ligula, vel tempus dui porttitor quis. Sed ultricies leo turpis, vitae sagittis sem pretium aliquam. Donec eleifend id turpis ac tincidunt. Quisque leo nisi, faucibus id tincidunt id, gravida vehicula arcu. Donec volutpat rhoncus tincidunt. Proin id pharetra ex. Praesent sed urna tempor, semper felis eget, ultricies nulla. Nulla facilisi. Curabitur et augue porttitor, gravida felis a, vulputate neque. Sed et interdum risus, eget rutrum mauris. Pellentesque volutpat purus ut metus malesuada ultricies. Fusce feugiat, mauris non tempor vulputate, quam mi luctus odio, a posuere libero nisl nec felis.
 Proin eget elit condimentum, hendrerit lacus quis, dignissim tellus. In congue semper finibus. Ut elementum, nibh non condimentum posuere, felis risus porttitor ligula, commodo molestie ligula elit a ligula. Sed non libero faucibus metus euismod porta ac nec ligula. Sed pharetra, velit eu pellentesque dignissim, dolor magna dapibus libero, sit amet volutpat sem tortor quis neque. Etiam ut bibendum risus. Phasellus blandit sodales sapien. Nunc sollicitudin accumsan lectus pretium lobortis. Quisque eget pretium orci. Pellentesque mauris enim, finibus vitae imperdiet non, fringilla a ex. Nam justo sapien, elementum nec risus eu, tincidunt lobortis risus. Nunc ut justo sed augue dignissim placerat. Phasellus eget ipsum rhoncus tortor tempor faucibus. Curabitur iaculis massa pellentesque, semper sapien luctus, commodo justo. Aenean a consequat quam, a vehicula risus. Proin erat tellus, pulvinar vitae dictum in, sodales quis orci.'''
-    
+
     rslt = None
     for frag in make_frags(s):
         rslt = receive_frag(frag)
-        
-    assert rslt == s, "got {}".format(rslt) 
-    
+
+    assert rslt == s, "got {}".format(rslt)
+
     s= b'''Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed diam justo, tincidunt eu fringilla non, aliquet vel tortor. Suspendisse risus sapien, fermentum nec eros sed, accumsan iaculis massa. Donec et felis vel ligula facilisis maximus. Pellentesque tempor orci ut blandit tempus. Pellentesque euismod enim id suscipit dictum. Nunc justo dui, laoreet vel diam sed, gravida suscipit velit. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Nunc fringilla ligula nulla. Nullam convallis ac elit eu dapibus.
 
 Suspendisse vitae arcu auctor, ornare ligula eget, porttitor ligula. Sed interdum, felis eget sagittis rutrum, nulla quam varius neque, et consectetur metus enim in tellus. Duis imperdiet urna nec consectetur ultricies. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Donec leo orci, ullamcorper ut neque at, condimentum volutpat ex. Donec pulvinar nisl condimentum nunc dictum, vel porta est lacinia. Vestibulum ut mattis urna. Donec at sagittis erat. Curabitur blandit nisl vitae eleifend consectetur.
@@ -200,9 +200,9 @@ Integer sed tincidunt orci, ut auctor purus. Nunc eget convallis sapien. Curabit
 Vivamus laoreet dolor vel sollicitudin porta. Donec aliquam lectus massa, sed vestibulum ligula aliquam sed. Vivamus in nulla quis ipsum scelerisque faucibus pharetra sed leo. Aliquam vitae tortor at erat bibendum tempus non non enim. Nunc sit amet interdum dui. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi auctor ligula eget convallis tempus. Vivamus ac massa quis diam mattis mollis. Aenean a venenatis arcu, et viverra mauris. Aenean eget leo erat. Vivamus blandit auctor ex interdum elementum. Aliquam vehicula ultricies consequat.
 
 Praesent blandit mi non velit dapibus dictum. Aenean ligula arcu, porta a nunc in, suscipit tristique mauris. Cras pretium mauris sit amet ipsum ultricies iaculis. Vivamus ut fringilla turpis, ut pulvinar magna. Mauris facilisis dictum arcu, vel feugiat odio cursus mattis. Nulla at elit eget orci convallis sollicitudin. Nullam in scelerisque nunc. Interdum et malesuada fames ac ante ipsum primis in faucibus. Fusce a mollis lacus, pretium iaculis leo. Donec sollicitudin purus a nunc consequat, nec sagittis risus consectetur. Quisque auctor quis arcu sit amet semper. Proin et turpis odio. In sed pretium enim, ut semper tortor. Vestibulum eget ornare velit, id aliquet erat.'''
-    
+
     rslt = None
     for frag in make_frags(s):
         rslt = receive_frag(frag)
-        
+
     assert rslt == s, "got {}".format(rslt)
