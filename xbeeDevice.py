@@ -9,9 +9,8 @@ import datetime
 
 import traceback
 
+from xbee import XBee as XBeeS1
 from xb900hp import XBee900HP
-
-
 class XBeeDied(Exception): pass
 
 class XBeeDevice:
@@ -24,11 +23,12 @@ class XBeeDevice:
         self._xbeeclass = xbeeclass
 
         self.log = logging.getLogger(__name__)
-        self.rssi_history = []
+        self.rssi_history = 10*[0]
 
         self._rxcallback = rxcallback
         self._next_frame_id = 1
         self._max_packets = 3
+        
         self._timeout = datetime.timedelta(seconds=1)
         self._lastrssi = datetime.datetime.now()
 
@@ -36,7 +36,6 @@ class XBeeDevice:
         self.xch = 0
         self.xmm = 0
         self.xid = 0
-
         self.address = 0
 
         self.mtu = 100 #series 1 doesn't support NP, and is always 100
@@ -48,8 +47,9 @@ class XBeeDevice:
             self.close()
             raise x
 
-        if 'xbeeCM' in kwargs:
-            self.send_cmd("at", command=b'CM', parameter= struct.pack(">Q", kwargs['xbeeCM']))
+       if 'xbeeCM' in kwargs and self._xbeeclass == XBee900HP:
+            self.send_cmd("at", command=b'CM',
+                parameter= struct.pack(">Q", kwargs['xbeeCM']))
             self.send_cmd("at", command=b'CM')
 
         self._in_init = False
@@ -91,6 +91,7 @@ class XBeeDevice:
             self.send_cmd("at", command=b'TO', parameter=b'\x40')
             self.send_cmd("at", command=b'CM')
 
+       # read addresses
         if self._addrlen == 2:
             self.send_cmd("at", command=b"MY")
         elif self._addrlen == 8:
@@ -126,7 +127,7 @@ class XBeeDevice:
     def sendwait(self, data=None, atcmd = 'tx',
                  timeout = None,
                  **kwargs):
-        'send the message and wait for the result'
+       'send the message and wait for the result'
 
         begin = datetime.datetime.now()
 
@@ -171,7 +172,7 @@ class XBeeDevice:
             # assume it works to avoid having to ask the radio for mm
             self.xmm = kwargs['mm']
 
-        if self._addrlen == 2:
+       if self._addrlen == 2:
             return self.send_cmd(cmd=atcmd,
                                  dest_addr=struct.pack(">H", dest),
                                  data=data, **kwargs)
@@ -367,6 +368,21 @@ class XBeeDevice:
 
                 if self.on_energy != None:
                     self.on_energy (self, [(self.channel_to_freq(i), d) for i,d in enumerate(pkt['parameter'])])
+            elif pkt['command'] == b'MM':
+                mac_modes = {
+                    b'\x00':'Digi + header',
+                    b'\x01':'802.15.4 (no ACKs)',
+                    b'\x02':'802.15.4 (with ACKs)',
+                    b'\x03':'Digi (no ACKs)'
+                }
+                if 'parameter' in pkt:
+                    self.log.info("MAC Mode: {}".format(
+                        mac_modes[pkt['status']] if pkt['parameter'] in mac_modes else "Unknown"
+                    ))
+                else:
+                    self.log.info("MAC Mode change {}.".format(
+                        "success" if pkt['status'] == b'\x00' else "error "+pkt['status'].decode('utf-8')
+                    ))
             else:
                 self.log.warn("Unsupported command response: {}:{}".format(pkt['command'], pkt))
         if pkt['id'] == 'rx':

@@ -56,7 +56,7 @@ class XTPClient():
         #self.xbee.send_cmd("at", command=b'MY', parameter=b'\x16\x16')
 
         logging.info("my address: {:x}".format(self.xbee.address))
-        logging.info("MTU: {}".format(self.xbee.mtu))
+        logging.info("MTU: {} bytes".format(self.xbee.mtu))
 
         self.remote = None
         self.have_remote = threading.Event()
@@ -100,13 +100,17 @@ class XTPClient():
                                     dest,
                                     hexdump.dump(msg)))
 
+            # send the request to begin a transfer
             try:
                 self.xbee.sendwait(data=msg, dest=dest, mm=b'\x02')
             except TimeoutError:
                 continue
 
             if (self.begin_transfer.wait(self.xbee._timeout.total_seconds())):
-                logging.info("Begin transfer at {} of {} for file {}.".format(offset, filesize, remote_filename))
+                logging.info("Begin transfer at {} of {} for file {}, ({} fragments).".format(
+                    offset, filesize, remote_filename,
+                    frags[0].total
+                    ))
                 ok_begin = True
                 break
             else:
@@ -136,7 +140,8 @@ class XTPClient():
             if txcnt == 0:
                 logging.warn("TX complete due to no packets to send")
                 return True # must have worked.
-
+            else:
+                logging.info("Sent {} fragments".format(txcnt))
             # block until all packets go out...
             self.xbee.flush()
 
@@ -156,7 +161,9 @@ class XTPClient():
                     continue
 
                 if self.have_acks.wait(self.xbee._timeout.total_seconds()):
-                    logging.debug("Got acks. [all=={}]".format(self.acks.all()))
+                    logging.info("Got acks. [{} of {}]".format(
+                        self.acks.count(),
+                        self.acks.length()))
                     got_acks = True
                     tm = datetime.datetime.now() - start
                     if self.acks.all():
