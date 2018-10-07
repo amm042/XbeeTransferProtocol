@@ -9,6 +9,7 @@ import logging.handlers
 import hexdump
 import time
 import datetime
+import threading
 import struct
 import queue
 import zlib
@@ -132,9 +133,9 @@ class XTPServer():
         #self.xbee.send_cmd("at", command=b'MY', parameter=b'\x15\x15')
 
         # mode 1 = 802.15.4 NO ACKs
-        self.xbee.send_cmd("at", command=b'MM', parameter=b'\x01')
-
-        #self.xbee.send_cmd("at", command=b'MM', parameter=b'\x02')
+        # mode 2 = 802.15.4 ACKs
+        #self.xbee.send_cmd("at", command=b'MM', parameter=b'\x01')
+        self.xbee.send_cmd("at", command=b'MM', parameter=b'\x02')
         #self.xbee.send_cmd("at", command=b'CH')
         #self.xbee.send_cmd("at", command=b'ID')
 
@@ -148,11 +149,13 @@ class XTPServer():
         self.beacon_time = datetime.timedelta(seconds=3)
         self.txq = queue.Queue()
 
-    def send(self, data, dest=0xffff):
+        self.quitEvt = threading.Event()
+
+    def send(self, data, dest=0xffff, **kwargs):
         "send (no fragmentation)"
 
         self.last_activity = datetime.datetime.now()
-        e = self.xbee.send(data, dest)
+        e = self.xbee.send(data, dest, **kwargs)
 
         logging.debug("TX [{:x}->{:x}][{}]: {}".format(self.xbee.address,
                                                   dest,
@@ -163,17 +166,23 @@ class XTPServer():
         else:
             logging.debug("TX [{}] timeout".format(e.fid))
 
+    def stop(self):
+        self.quitEvt.set()
+
     def run_forever(self):
 
-        while True:
+        while not self.quitEvt.is_set():
+            
             if datetime.datetime.now() - self.last_activity > self.beacon_time:
                 self.txq.put((0xffff, xTP.HELLO))
             try:
                 dest, msg = self.txq.get(True, self.beacon_time.total_seconds())
-                self.send(dest=dest, data=msg)
+                self.send(dest=dest, data=msg, mm=b'\x02')
 
             except queue.Empty:
                 continue
+        logging.info("Rx thread shutdown.")
+
 
 if __name__ == "__main__":
     # run the Server

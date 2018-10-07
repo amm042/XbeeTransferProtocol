@@ -71,14 +71,12 @@ class XTPClient():
 
         # mode 1 = 802.15.4 NO ACKs
         self.xbee.send_cmd("at", command=b'MM', parameter=b'\x01')
-
-        #self.xbee.send_cmd("at", command=b'CH')
-        #self.xbee.send_cmd("at", command=b'ID')
+        self.xbee.send_cmd("at", command=b'MM')
 
         self.last_activity = datetime.datetime.now()
-        self.beacon_time = datetime.timedelta(seconds=3)
+        self.beacon_time = datetime.timedelta(seconds=1)
 
-        self.remote_timeout = datetime.timedelta(seconds=30)
+        self.remote_timeout = datetime.timedelta(seconds=10)
 
     def send(self, data, remote_filename, filesize, offset = 0, dest=0xffff):
         "send with fragmentation, returns true on success"
@@ -103,7 +101,7 @@ class XTPClient():
                                     hexdump.dump(msg)))
 
             try:
-                self.xbee.sendwait(data=msg, dest=dest)
+                self.xbee.sendwait(data=msg, dest=dest, mm=b'\x02')
             except TimeoutError:
                 continue
 
@@ -128,7 +126,8 @@ class XTPClient():
                     txcnt += 1
                     d = xTP.SEND32_DATA + struct.pack(">L", i) + f.data
                     e = self.xbee.send(data=d,
-                                       dest=dest)
+                                       dest=dest,
+                                       mm=b'\x01')
 
                     logging.debug("TX SEND32_DATA {}/{} [{:x}->{:x}][{}]: {}".format(i, len(frags),
                                             self.xbee.address,
@@ -152,7 +151,7 @@ class XTPClient():
                                         e.fid, hexdump.dump(msg)))
 
                 try:
-                    self.xbee.sendwait(data=msg, dest=dest)
+                    self.xbee.sendwait(data=msg, dest=dest, mm=b'\x02')
                 except TimeoutError:
                     continue
 
@@ -167,13 +166,15 @@ class XTPClient():
                     break
 
             if got_acks == False:
-                loggin.warn("Failed because remote didn't send acks.")
+                logging.warn("Failed because remote didn't send acks.")
                 return False
 
 
         return False
 
-    def send_file(self, filename, remote_filename = None):
+    def send_file(self, filename,
+                  remote_filename = None,
+                  chunk_size = 8*1024):
         if remote_filename == None:
             remote_filename = filename
 
@@ -187,7 +188,7 @@ class XTPClient():
             with open(filename, 'rb') as f:
 
                 while pos == 0 or len(data) > 0:
-                    data = f.read(6*1024)
+                    data = f.read(chunk_size)
 
                     if len(data) > 0:
                         success = False
@@ -215,7 +216,7 @@ class XTPClient():
                                     hexdump.dump(msg)))
 
             try:
-                self.xbee.sendwait(data=msg, dest=self.remote)
+                self.xbee.sendwait(data=msg, dest=self.remote, mm=b'\x02')
             except TimeoutError:
                 continue
             if self.have_response[waitfor_msg]['e'].wait(self.xbee._timeout.total_seconds()):
