@@ -72,24 +72,27 @@ if __name__=="__main__":
         handlers=(logging.StreamHandler(sys.stdout),),
         format='%(asctime)s - %(name)s - %(levelname)s %(message)s')
 
+    print("Detecting xbee")
     desc = {}
     for pinfo in list_ports.comports():
         if pinfo.description in desc:
             desc[pinfo.description] += [pinfo.device]
         else:
             desc[pinfo.description] = [pinfo.device]
-
+    print(desc)
     p = None
     for desc, ports in desc.items():
-        if len(ports) == 2:
+        if desc == "FT232R USB UART":
             p = ports
             break
     if (p):
         print('using {} ({})'.format(p, desc))
         if (ok()):
 
-            bench(p[0], p[1])
+            bench(p[0])
 
             print("Done.")
         else:
             print("Aborted.")
+    else:
+        print("Failed to find an Xbee")
