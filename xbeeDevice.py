@@ -28,7 +28,7 @@ class XBeeDevice:
         self._rxcallback = rxcallback
         self._next_frame_id = 1
         self._max_packets = 3
-        
+
         self._timeout = datetime.timedelta(seconds=1)
         self._lastrssi = datetime.datetime.now()
 
@@ -46,8 +46,7 @@ class XBeeDevice:
         except Exception as x:
             self.close()
             raise x
-
-       if 'xbeeCM' in kwargs and self._xbeeclass == XBee900HP:
+        if 'xbeeCM' in kwargs and self._xbeeclass == XBee900HP:
             self.send_cmd("at", command=b'CM',
                 parameter= struct.pack(">Q", kwargs['xbeeCM']))
             self.send_cmd("at", command=b'CM')
@@ -83,7 +82,7 @@ class XBeeDevice:
         for part in self._xbee.api_commands['tx']:
             if part['name'] == 'dest_addr':
                 self._addrlen = part['len']
-    
+
         self.log.warn("Using TX low-power!!!!!")
         self.send_cmd("at", command=b'PL', parameter=b'\x00')
         # point to multipoint
@@ -127,8 +126,7 @@ class XBeeDevice:
     def sendwait(self, data=None, atcmd = 'tx',
                  timeout = None,
                  **kwargs):
-       'send the message and wait for the result'
-
+        'send the message and wait for the result'
         begin = datetime.datetime.now()
 
         # may raise timeouterror
@@ -171,8 +169,7 @@ class XBeeDevice:
             #self.send_cmd("at", command=b'MM')
             # assume it works to avoid having to ask the radio for mm
             self.xmm = kwargs['mm']
-
-       if self._addrlen == 2:
+        if self._addrlen == 2:
             return self.send_cmd(cmd=atcmd,
                                  dest_addr=struct.pack(">H", dest),
                                  data=data, **kwargs)
