@@ -3,6 +3,7 @@ import zlib
 import fragmentation16 as frag
 import logging
 import sys
+import os
 import os.path
 import logging.handlers
 import hexdump
@@ -12,8 +13,7 @@ import threading
 from bitarray import bitarray
 import struct
 import argparse
-
-
+import math
 from xTP import xTP, md5file
 from xbee import XBee as XBeeS1
 from xb900hp import XBee900HP
@@ -76,7 +76,7 @@ class XTPClient():
         self.last_activity = datetime.datetime.now()
         self.beacon_time = datetime.timedelta(seconds=1)
 
-        self.remote_timeout = datetime.timedelta(seconds=10)
+        self.remote_timeout = datetime.timedelta(seconds=16)
 
     def send(self, data, remote_filename, filesize, offset = 0, dest=0xffff):
         "send with fragmentation, returns true on success"
@@ -87,9 +87,23 @@ class XTPClient():
         # mtu seems imprecise. (does not include headers)
         frags = list(frag.make_frags(data, threshold=self.xbee.mtu - 8, encode = False))
 
+        assert len(frags)< 2**16, "Using 16-bit frag counter, too many fragments. Chunk size is too big!"
+
+        self.xbee.reset_rssi()
         self.begin_transfer.clear()
         self.have_acks.clear()
         ok_begin = False
+
+        stats = {
+            'control_pkt': 0,
+            'control_bytes': 0,
+            'frag_pkt': 0,
+            'frag_bytes': 0,
+            'frag_nack': 0,
+            'frag_total': len(frags),
+            'frag_total_bytes': len(data)
+        }
+
         for i in range(self.retries):
             msg = xTP.SEND32_REQ + struct.pack(">LLLL",
                               offset, filesize, frags[0].total, frags[0].crc) + \
@@ -100,6 +114,9 @@ class XTPClient():
                                     dest,
                                     hexdump.dump(msg)))
 
+            stats['control_pkt'] += 1
+            stats['control_bytes'] += len(msg)
+
             # send the request to begin a transfer
             try:
                 self.xbee.sendwait(data=msg, dest=dest, mm=b'\x02')
@@ -107,18 +124,20 @@ class XTPClient():
                 continue
 
             if (self.begin_transfer.wait(self.xbee._timeout.total_seconds())):
-                logging.info("Begin transfer at {} of {} for file {}, ({} fragments).".format(
+                self.xbee.get_rssi()
+                logging.debug("Begin transfer at {} of {} for file {}, ({} fragments).".format(
                     offset, filesize, remote_filename,
                     frags[0].total
                     ))
                 ok_begin = True
                 break
             else:
+                self.xbee.get_rssi()
                 logging.info("Failed to begin transfer.")
-                return False
+                return False, stats
 
         if ok_begin == False:
-            return False
+            return False, stats
 
         #initial set of acks
         self.acks = bitarray(len(frags))
@@ -128,10 +147,13 @@ class XTPClient():
             for i,f in enumerate(frags):
                 if self.acks[i] == False:
                     txcnt += 1
-                    d = xTP.SEND32_DATA + struct.pack(">L", i) + f.data
+                    d = xTP.SEND32_DATA + struct.pack(">H", i) + f.data
                     e = self.xbee.send(data=d,
                                        dest=dest,
                                        mm=b'\x01')
+
+                    stats['frag_pkt'] += 1
+                    stats['frag_bytes'] += len(d)
 
                     logging.debug("TX SEND32_DATA {}/{} [{:x}->{:x}][{}]: {}".format(i, len(frags),
                                             self.xbee.address,
@@ -139,14 +161,16 @@ class XTPClient():
                                             e.fid, hexdump.dump(d)))
             if txcnt == 0:
                 logging.warn("TX complete due to no packets to send")
-                return True # must have worked.
+                return True, stats # must have worked.
             else:
-                logging.info("Sent {} fragments".format(txcnt))
+                logging.debug("Sent {} fragments".format(txcnt))
             # block until all packets go out...
             self.xbee.flush()
 
             got_acks = False
             for k in range(self.retries):
+                self.xbee.get_rssi()
+
                 msg = xTP.SEND32_GETACKS
                 self.have_acks.clear()
 
@@ -154,6 +178,8 @@ class XTPClient():
                                         self.xbee.address,
                                         dest,
                                         e.fid, hexdump.dump(msg)))
+                stats['control_pkt'] += 1
+                stats['control_bytes'] += len(msg)
 
                 try:
                     self.xbee.sendwait(data=msg, dest=dest, mm=b'\x02')
@@ -161,29 +187,44 @@ class XTPClient():
                     continue
 
                 if self.have_acks.wait(self.xbee._timeout.total_seconds()):
-                    logging.info("Got acks. [{} of {}]".format(
+                    stats['frag_nack'] += len(self.acks) - self.acks.count()
+
+                    logging.debug("Got acks. [{} of {}]".format(
                         self.acks.count(),
                         self.acks.length()))
                     got_acks = True
                     tm = datetime.datetime.now() - start
                     if self.acks.all():
-                        logging.info("Finish transfer at {} of {} for file {} in {} = {:.2f} kbps.".format(
-                                offset, filesize, remote_filename, tm, (8*len(data)/1024) / tm.total_seconds() ))
-                        return True
+                        logging.debug("Finish transfer at {} of {} for file {} in {} = {:.2f} kbps, avg_rssi = {:.2f} dBm.".format(
+                                offset, filesize, remote_filename, tm, (8*len(data)/1024) / tm.total_seconds(),
+                                self.xbee.avg_rssi()))
+                        return True, stats
                     break
 
             if got_acks == False:
                 logging.warn("Failed because remote didn't send acks.")
-                return False
+                return False, stats
 
 
-        return False
+        return False, stats
 
     def send_file(self, filename,
                   remote_filename = None,
                   chunk_size = 8*1024):
         if remote_filename == None:
             remote_filename = filename
+
+        filestats = {
+            'control_pkt': 0,
+            'control_bytes': 0,
+            'chunks_total': 0,
+            'chunks_sent': 0,
+            'frag_pkt': 0,
+            'frag_nack': 0,
+            'frag_bytes': 0,
+            'frag_total': 0,
+            'frag_total_bytes': 0
+        }
 
         if os.path.exists(filename):
             if not self.have_remote.wait(timeout=0):
@@ -192,27 +233,47 @@ class XTPClient():
                     raise NoRemoteException("No remote server detected.")
 
             pos = 0
-            with open(filename, 'rb') as f:
+            chunknum = 0
+            fsize = os.stat(filename).st_size
 
+            with open(filename, 'rb') as f:
                 while pos == 0 or len(data) > 0:
+                    chunknum += 1
                     data = f.read(chunk_size)
 
                     if len(data) > 0:
+                        filestats['chunks_total'] += 1
+
+                        logging.info("Sending chunk {} of {} for file {} using {} byte chunks, avg rssi {} dBm.".format(
+                            chunknum,
+                            math.ceil(fsize/chunk_size),
+                            filename,
+                            chunk_size,
+                            self.xbee.avg_rssi()
+                            ))
+
                         success = False
-                        for i in range(5):
-                            if (self.send(data=data,
+                        for i in range(self.retries):
+                            filestats['chunks_sent'] += 1
+                            result, stats = self.send(data=data,
                                   remote_filename=remote_filename,
                                   offset = pos,
                                   filesize= os.path.getsize(filename),
-                                  dest=self.remote)):
+                                  dest=self.remote)
+
+                            # sum stats onto filestats.
+                            for k,v in stats.items():
+                                filestats[k] += v
+
+                            if (result):
                                 pos += len(data)
                                 success = True
                                 break
                             logging.warn("Retry chunk.")
                         if success == False:
-                            return False
+                            return False, filestats
 
-            return success
+            return success, filestats
     def send_pkt_retry(self, msg, waitfor_msg):
         self.have_response[waitfor_msg] = {'e': threading.Event(), 'rsp': None}
         for i in range(self.retries):

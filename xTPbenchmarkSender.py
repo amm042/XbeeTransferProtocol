@@ -38,7 +38,7 @@ def bench(txdev, baud=38400, opts="8N1"):
     for tries in range(16):
         for cs in [1,2,4,8,16,32,64]:
             start = datetime.now()
-            tx.xbee.rssi_history = []
+            tx.xbee.rssi_history = 10*[0]
 
             r = tx.send_file('test-8M.dat', chunk_size = 1024*cs)
             end = datetime.now()

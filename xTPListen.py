@@ -50,7 +50,7 @@ class XTPServer():
                                                    os.path.dirname(fname)))
             os.makedirs(outpath, exist_ok=True)
 
-            logging.info("Begin transfer {} of {}: {}".format(t['offset'], t['total_size'],
+            logging.debug("Begin RX transfer {} of {}: {}".format(t['offset'], t['total_size'],
                                                               t['filename']))
             self.txq.put((srcaddr, xTP.SEND32_BEGIN))
         elif fragdata[0:1] == xTP.MD5_CHECK and srcaddr in self.transfers:
@@ -84,9 +84,9 @@ class XTPServer():
                           ))
 
         elif fragdata[0:1] == xTP.SEND32_DATA and srcaddr in self.transfers:
-            i = struct.unpack(">L", fragdata[1:5])[0]
+            i = struct.unpack(">H", fragdata[1:3])[0]
             logging.debug("  got frag {}/{}".format(i, self.transfers[srcaddr]['total_frags']))
-            self.transfers[srcaddr]['frags'][i] = fragdata[5:]
+            self.transfers[srcaddr]['frags'][i] = fragdata[3:]
             self.transfers[srcaddr]['frag_mask'][i] = True
             if self.transfers[srcaddr]['frag_mask'].all() and not self.transfers[srcaddr]['status'] == xTP.SEND32_DONE:
                 r = b''
@@ -99,7 +99,7 @@ class XTPServer():
 
                     outfile = os.path.abspath(os.path.join(self.path, self.transfers[srcaddr]['filename']))
 
-                    logging.info("File transfer complete, SUCCESS, write to {}".format(outfile))
+                    logging.debug("File RX transfer complete, SUCCESS, write to {}".format(outfile))
 
                     #outfile.seek(self.transfers[srcaddr]['offset'], io.SEEK_SET)
 
@@ -172,7 +172,7 @@ class XTPServer():
     def run_forever(self):
 
         while not self.quitEvt.is_set():
-            
+
             if datetime.datetime.now() - self.last_activity > self.beacon_time:
                 self.txq.put((0xffff, xTP.HELLO))
             try:
@@ -180,6 +180,7 @@ class XTPServer():
                 self.send(dest=dest, data=msg, mm=b'\x02')
 
             except queue.Empty:
+                self.xbee.get_rssi()
                 continue
         logging.info("Rx thread shutdown.")
 

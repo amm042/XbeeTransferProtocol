@@ -1,13 +1,24 @@
+#!/usr/bin/env python3
 from xTPListen import XTPServer
-from xTPSend import XTPClient
+from xTPSend import XTPClient, NoRemoteException
 from xbee import XBee as XBeeS1
+from xbeeDevice import XBeeDied
 
 from serial.tools import list_ports
 
 import threading
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+
+from pprint import pprint
+
+from pymongo import MongoClient
+
+import argparse
+
+collect = MongoClient("mongodb://owner:Biethux7@eg-mongodb/amm042")['amm042']['xTBbenchmark']
+
 
 def ok():
     user = '!'
@@ -17,61 +28,162 @@ def ok():
     return user in 'yY' or user == ''
 
 
-def bench(txdev, rxdev, baud=38400, opts="8N1"):
-    "This is setup for two XBee S1's"
+def bench(send_dev = None, receive_dev=None, baud=38400, opts="8N1"):
+    "benchmark using given devices."
 
-    rx = XTPServer(
-        "{}:{}:{}".format(rxdev, baud, opts),
-        "./tmp",
-        XBeeS1)
+    if receive_dev:
+        rx = XTPServer(
+            "{}:{}:{}".format(receive_dev, baud, opts),
+            "./tmp",
+            XBeeS1)
 
-    rx_thread = threading.Thread(
-        target=rx.run_forever,
-        name="Bench Rx Thread")
-    rx_thread.start()
+        # if also sending, run receive on a separate thread, else
+        # receive runs on the main thread.
+        if send_dev:
+            rx_thread = threading.Thread(
+                target=rx.run_forever,
+                name="Bench Rx Thread")
+            rx_thread.start()
+        else:
+            try:
+                rx.run_forever()
+            except KeyboardInterrupt:
+                print("Ctrl-C, quit.")
 
-    tx = XTPClient(
-        "{}:{}:{}".format(txdev, baud, opts),
-        XBeeS1)
+    if send_dev:
+        tx = XTPClient(
+            "{}:{}:{}".format(send_dev, baud, opts),
+            XBeeS1)
 
-    #$ dd if=/dev/urandom of=test-1M.dat bs=1M count=1
+        #$ dd if=/dev/urandom of=test-1M.dat bs=1M count=1
 
-    result = {}
-    for tries in range(16):
-        for cs in [1,2,4,8,16,32,64]:
-            start = datetime.now()
-            tx.xbee.rssi_history = []
-            rx.xbee.rssi_history = []
-            r = tx.send_file('test-8M.dat', chunk_size = 1024*cs)
-            end = datetime.now()
+        result = {}
+        for tries in range(16):
+            for cs in [1,2,4,8,16,32,64]:
 
-            if (r):
-                if cs in result:
-                    result[cs] += [ (end-start,
-                                     tx.xbee.avg_rssi(),
-                                     rx.xbee.avg_rssi()) ]
+                testfile= 'test-1M.dat'
+                chunksize = 1024*cs
+                try:
+                    start = datetime.now()
+                    r, st = tx.send_file(testfile, chunk_size = chunksize)
+                    end = datetime.now()
+                    st['success'] = r
+                    st['when'] = datetime.now(timezone.utc)
+                    st['filename'] = testfile
+                    st['chunksize'] = chunksize
+                    st['tx_rssi'] = tx.xbee.rssi_history
+                    st['rx_rssi'] = rx.xbee.rssi_history
+                    st['seconds'] = (end - start).total_seconds()
+                    st['rate'] = st['frag_total_bytes'] / st['seconds']
+                    collect.insert_one(st)
+
+                except NoRemoteException:
+                    print("No remote detected, skipping .")
+                    if not rx_thread.isAlive():
+                        print ("RX Died. Abort.")
+                        try:
+                            rx.stop()
+                            rx_thread.join(timeout=1)
+                            rx.xbee.close()
+                            tx.xbee.close()
+                        except:
+                            pass
+                        print("="*80)
+                        for cs, r in result.items():
+                            print("-"*80)
+                            print("{}K".format(cs))
+                            print(", ".join(["{}".format(z[0]) for z in r]))
+                            print(", ".join(["{}".format(z[1]) for z in r]))
+                            print(", ".join(["{}".format(z[2]) for z in r]))
+                        exit(-7)
+                    continue
+                except XBeeDied:
+                    print("Xbee Died. Abort.")
+                    try:
+                        rx.stop()
+                        rx_thread.join(timeout=1)
+                        rx.xbee.close()
+                        tx.xbee.close()
+                    except:
+                        pass
+                    print("="*80)
+                    for cs, r in result.items():
+                        print("-"*80)
+                        print("{}K".format(cs))
+                        print(", ".join(["{}".format(z[0]) for z in r]))
+                        print(", ".join(["{}".format(z[1]) for z in r]))
+                        print(", ".join(["{}".format(z[2]) for z in r]))
+                    exit(-6)
+                except KeyboardInterrupt:
+                    print("Ctrl-C, exit")
+
+                    try:
+                        rx.stop()
+                        rx_thread.join(timeout=1)
+                        rx.xbee.close()
+                        tx.xbee.close()
+                    except:
+                        pass
+                    print("="*80)
+                    for cs, r in result.items():
+                        print("-"*80)
+                        print("{}K".format(cs))
+                        print(", ".join(["{}".format(z[0]) for z in r]))
+                        print(", ".join(["{}".format(z[1]) for z in r]))
+                        print(", ".join(["{}".format(z[2]) for z in r]))
+                    exit(-5)
+
+
+                print (st)
+                if (r):
+                    if cs in result:
+                        result[cs] += [ (end-start,
+                                         tx.xbee.avg_rssi(),
+                                         rx.xbee.avg_rssi()) ]
+                    else:
+                        result[cs] = [ (end-start,
+                                        tx.xbee.avg_rssi(),
+                                        rx.xbee.avg_rssi()) ]
                 else:
-                    result[cs] = [ (end-start,
-                                    tx.xbee.avg_rssi(),
-                                    rx.xbee.avg_rssi()) ]
-            else:
-                print("{}K = {}".format(cs, "Failed!"))
+                    print("{}K = {}. Avg tx RSSI: {}, avg rx RSSI: {}".format(
+                        cs, "Failed! ()", tx.xbee.avg_rssi(), rx.xbee.avg_rssi()))
 
-            # print partial results if we crash it's ok
-            for cs, r in result.items():
-                print("-"*80)
-                print("{}K".format(cs))
-                print(", ".join(["{}".format(z[0]) for z in r]))
-                print(", ".join(["{}".format(z[1]) for z in r]))
-                print(", ".join(["{}".format(z[2]) for z in r]))
+    #
+    # print("="*80)
+    # for cs, r in result.items():
+    #     print("-"*80)
+    #     print("{}K".format(cs))
+    #     print(", ".join(["{}".format(z[0]) for z in r]))
+    #     print(", ".join(["{}".format(z[1]) for z in r]))
+    #     print(", ".join(["{}".format(z[2]) for z in r]))
 
-    rx.stop()
-    rx_thread.join()
-    rx.xbee.close()
-    tx.xbee.close()
+    if receive_dev:
+        rx.stop()
+        rx_thread.join()
+        rx.xbee.close()
+    if send_dev:
+        tx.xbee.close()
     print("-"*80)
 
 if __name__=="__main__":
+
+
+    p = argparse.ArgumentParser()
+    p.add_argument("-a", "--archive_path",
+                   help="local path to store archived copies",
+                   default="./archive")
+    p.add_argument("-m", "--mode",
+                   help="Operational mode",
+                   choices = ['send', 'receive', 'both'],
+                   required = True)
+    args = p.parse_args()
+
+    num_xbees = {'send': 1,
+                 'receive': 1,
+                 'both': 2}
+
+    en_tx = args.mode in ['send', 'both']
+    en_rx = args.mode in ['receive', 'both']
 
     logging.basicConfig(
         level=logging.INFO,
@@ -85,17 +197,26 @@ if __name__=="__main__":
             desc[pinfo.description] += [pinfo.device]
         else:
             desc[pinfo.description] = [pinfo.device]
-    print(desc)
+    print('detected ports:', desc)
     p = None
     for desc, ports in desc.items():
-        if len(ports) == 2:
+        # may have to add extra descrition checks here...
+        if 'FT232' in desc and len(ports) >= num_xbees[args.mode]:
             p = ports
             break
     if (p):
         print('using {} ({})'.format(p, desc))
         if (ok()):
-
-            bench(p[0], p[1])
+            try:
+                if args.mode == 'send':
+                    bench(send_dev = p[0])
+                elif args.mode =='receive':
+                    bench(receive_dev = p[0])
+                else:
+                    bench(send_dev = p[0],
+                          receive_dev = p[1])
+            except TimeoutError:
+                print("Benchmark failed due to timeout communicating with radio, check USB cables.")
 
             print("Done.")
         else:

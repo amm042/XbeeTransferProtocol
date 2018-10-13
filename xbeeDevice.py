@@ -23,7 +23,7 @@ class XBeeDevice:
         self._xbeeclass = xbeeclass
 
         self.log = logging.getLogger(__name__)
-        self.rssi_history = 10*[0]
+        self.reset_rssi()
 
         self._rxcallback = rxcallback
         self._next_frame_id = 1
@@ -73,7 +73,8 @@ class XBeeDevice:
         self._serial = serial.Serial(dev, baudrate=int(baud),
                                      bytesize=int(opts[0]),
                                      parity=opts[1],
-                                     stopbits=int(opts[2]))
+                                     stopbits=int(opts[2]),
+                                     rtscts = True)
         self._xbee = self._xbeeclass(self._serial, escaped=True,
                           callback=self._on_rx,
                           error_callback = self._on_error)
@@ -83,8 +84,14 @@ class XBeeDevice:
             if part['name'] == 'dest_addr':
                 self._addrlen = part['len']
 
-        self.log.warn("Using TX low-power!!!!!")
+        # remove this to use default power level.
+        self.log.warn("Check power levels!!!!!")
         self.send_cmd("at", command=b'PL', parameter=b'\x00')
+        self.send_cmd("at", command=b'PL')
+
+        # self.send_cmd("at", command=b'PM', parameter=b'\x01')
+        # self.send_cmd("at", command=b'PM')
+
         # point to multipoint
         if self._xbeeclass == XBee900HP:
             self.send_cmd("at", command=b'TO', parameter=b'\x40')
@@ -222,15 +229,27 @@ class XBeeDevice:
         return e
 
     def _on_error(self, error):
-        self.log.warn('Failed with: {}'.format(str(error)))
-        self.log.warn(traceback.format_exc())
-        self._serial.close()
-        self._xbee = None
-        self._serial = None
+        self.log.error('Failed with: {}'.format(str(error)))
+        self.log.error(traceback.format_exc())
 
-        # reload xbee
-        if self._in_init == False:
-            self._mkxbee()
+        raise XBeeDied(error)
+        # raise XBeeDied?
+
+        #
+        # try:
+        #     self._serial.close()
+        # except:
+        #     pass
+        #
+        # self._xbee = None
+        # self._serial = None
+        #
+        # # reload xbee
+        # if self._in_init == False:
+        #     try:
+        #         self._mkxbee()
+        #     except Exception as x:
+        #         raise x
 
     def freq_to_maskbit(self, freq):
         atfreq = 902.4
@@ -277,7 +296,11 @@ class XBeeDevice:
         return freq
     def avg_rssi(self):
         if len(self.rssi_history) > 0:
-            return sum(self.rssi_history)/len(self.rssi_history)
+            frssi = list(filter(lambda x: x!=0, self.rssi_history))
+            if len(frssi) > 0:
+                return sum(frssi)/len(frssi)
+            else:
+                return 0
         else:
             return 0
     def _on_rx(self, pkt):
@@ -339,16 +362,48 @@ class XBeeDevice:
                 if 'parameter' in pkt:
                     self.address = struct.unpack (">H", pkt['parameter'])[0]
             elif pkt['command'] == b'DB':
-                self.log.debug("RSSI -{}dBm".format(pkt['parameter'][0] ))
 
-                if len(self.rssi_history)>100:
-                    self.rssi_history.pop()
-                self.rssi_history.append(-pkt['parameter'][0])
+                if pkt['parameter'][0] != 0:
+                    #self.rssi_history.pop(0)
+                    self.rssi_history.append(-pkt['parameter'][0])
+
+                    #self.log.info("RSSI -{}dBm {}".format(pkt['parameter'][0], self.rssi_history ))
+
             elif pkt['command'] == b'NP':
                 self.log.info("NP Resp: {}".format(pkt))
                 if 'parameter' in pkt:
                     self.mtu = pkt['parameter'][0]
+            elif pkt['command'] == b'PL':
+                if 'parameter' in pkt:
+                    pwr = struct.unpack(">B", pkt['parameter'])[0]
+                    # this is for series 2...
+                    # if pwr == 0:
+                    #     pwr_str = "-5 dBm"
+                    # elif pwr == 1:
+                    #     pwr_str = "-1 dBm"
+                    # elif pwr == 2:
+                    #     pwr_str = "1 dBm"
+                    # elif pwr == 3:
+                    #     pwr_str = "3 dBm"
+                    # elif pwr == 4:
+                    #     pwr_str = "5 dBm"
+                    # else:
+                    #     pwr_str = "{} (unknown/unsupported dBm)".format(pwr)
 
+                    self.log.info("Power Level: {}".format(pwr))
+                else:
+                    self.log.info("PL set.")
+            elif pkt['command'] == b'PM':
+                if 'parameter' in pkt:
+                    boost = struct.unpack(">B", pkt['parameter'])[0]
+                    if boost == 1:
+                        self.log.info("Power boost on (+2 dBm rx, +3 dBm tx).")
+                    elif boost == 0:
+                        self.log.info("Power boost off.")
+                    else:
+                        self.log.info("Power boost unknown/unsupported ({}).".format(boost))
+                else:
+                    self.log.info("PM set.")
             elif pkt['command'] == b'FN':
                 self.log.info("Neighbor info: {}".format(pkt['rf_data'].decode('utf-8')))
             elif pkt['command'] == b'ND':
@@ -385,11 +440,14 @@ class XBeeDevice:
         if pkt['id'] == 'rx':
 
 
-            if datetime.datetime.now() - self._lastrssi > datetime.timedelta(seconds=5):
-                # poll rssi
-                self.send_cmd("at", command=b'DB')
-                self._lastrssi = datetime.datetime.now()
-
+            # if (
+            #     (sum(self.rssi_history) == 0) and (datetime.datetime.now() - self._lastrssi > datetime.timedelta(seconds=0.1)) or
+            #     (datetime.datetime.now() - self._lastrssi > datetime.timedelta(seconds=5))
+            #     ):
+            #     # poll rssi
+            #     # disable for testing....
+            #     # self.send_cmd("at", command=b'DB')
+            #     self._lastrssi = datetime.datetime.now()
 
             srcaddr = None
             if self._addrlen == 2:
@@ -403,7 +461,11 @@ class XBeeDevice:
                              srcaddr,
                              pkt['rf_data'])
 
-
+    def reset_rssi(self):
+        self.rssi_history = []
+    def get_rssi(self):
+        self.send_cmd("at", command=b'DB')
+        self._lastrssi = datetime.datetime.now()
     def close(self):
         self._xbee.halt()
         self._serial.close()
