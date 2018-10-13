@@ -146,6 +146,9 @@ class XTPServer():
         self.last_activity = datetime.datetime.now()
         self.path = filepath
         os.makedirs(filepath, exist_ok=True)
+
+        logging.info("received files will be stored in {}".format(
+            os.path.abspath(self.path)))
         self.beacon_time = datetime.timedelta(seconds=3)
         self.txq = queue.Queue()
 

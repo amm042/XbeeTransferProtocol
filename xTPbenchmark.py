@@ -28,14 +28,15 @@ def ok():
     return user in 'yY' or user == ''
 
 
-def bench(send_dev = None, receive_dev=None, baud=38400, opts="8N1"):
+def bench(send_dev = None, archive_path="./tmp", receive_dev=None, baud=38400, opts="8N1", **kwargs):
     "benchmark using given devices."
 
     if receive_dev:
         rx = XTPServer(
             "{}:{}:{}".format(receive_dev, baud, opts),
-            "./tmp",
-            XBeeS1)
+            archive_path,
+            XBeeS1,
+            **kwargs)
 
         # if also sending, run receive on a separate thread, else
         # receive runs on the main thread.
@@ -49,11 +50,15 @@ def bench(send_dev = None, receive_dev=None, baud=38400, opts="8N1"):
                 rx.run_forever()
             except KeyboardInterrupt:
                 print("Ctrl-C, quit.")
+                rx.stop()
+                rx.xbee.close()
+                return
 
     if send_dev:
         tx = XTPClient(
             "{}:{}:{}".format(send_dev, baud, opts),
-            XBeeS1)
+            XBeeS1,
+            **kwargs)
 
         #$ dd if=/dev/urandom of=test-1M.dat bs=1M count=1
 
@@ -79,7 +84,7 @@ def bench(send_dev = None, receive_dev=None, baud=38400, opts="8N1"):
 
                 except NoRemoteException:
                     print("No remote detected, skipping .")
-                    if not rx_thread.isAlive():
+                    if receive_dev and not rx_thread.isAlive():
                         print ("RX Died. Abort.")
                         try:
                             rx.stop()
@@ -100,9 +105,10 @@ def bench(send_dev = None, receive_dev=None, baud=38400, opts="8N1"):
                 except XBeeDied:
                     print("Xbee Died. Abort.")
                     try:
-                        rx.stop()
-                        rx_thread.join(timeout=1)
-                        rx.xbee.close()
+                        if receive_dev:
+                            rx.stop()
+                            rx_thread.join(timeout=1)
+                            rx.xbee.close()
                         tx.xbee.close()
                     except:
                         pass
@@ -118,9 +124,10 @@ def bench(send_dev = None, receive_dev=None, baud=38400, opts="8N1"):
                     print("Ctrl-C, exit")
 
                     try:
-                        rx.stop()
-                        rx_thread.join(timeout=1)
-                        rx.xbee.close()
+                        if receive_dev:
+                            rx.stop()
+                            rx_thread.join(timeout=1)
+                            rx.xbee.close()
                         tx.xbee.close()
                     except:
                         pass
@@ -169,6 +176,10 @@ if __name__=="__main__":
 
 
     p = argparse.ArgumentParser()
+    p.add_argument("-d", "--debug",
+                   help="debug level",
+                   choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                   default='INFO')
     p.add_argument("-a", "--archive_path",
                    help="local path to store archived copies",
                    default="./archive")
@@ -176,6 +187,12 @@ if __name__=="__main__":
                    help="Operational mode",
                    choices = ['send', 'receive', 'both'],
                    required = True)
+    p.add_argument("-pl", "--pl",
+                   help="transmit power level",
+                   type = int,
+                   choices = range(5),
+                   default = 0)
+
     args = p.parse_args()
 
     num_xbees = {'send': 1,
@@ -186,7 +203,7 @@ if __name__=="__main__":
     en_rx = args.mode in ['receive', 'both']
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.getLevelName(args.debug),
         handlers=(logging.StreamHandler(sys.stdout),),
         format='%(asctime)s - %(name)s - %(levelname)s %(message)s')
 
@@ -209,12 +226,12 @@ if __name__=="__main__":
         if (ok()):
             try:
                 if args.mode == 'send':
-                    bench(send_dev = p[0])
+                    bench(send_dev = p[0], **vars(args))
                 elif args.mode =='receive':
-                    bench(receive_dev = p[0])
+                    bench(receive_dev = p[0], **vars(args))
                 else:
                     bench(send_dev = p[0],
-                          receive_dev = p[1])
+                          receive_dev = p[1], **vars(args))
             except TimeoutError:
                 print("Benchmark failed due to timeout communicating with radio, check USB cables.")
 

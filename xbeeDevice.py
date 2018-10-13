@@ -38,6 +38,11 @@ class XBeeDevice:
         self.xid = 0
         self.address = 0
 
+        if 'pl' in kwargs:
+            self.pl = kwargs['pl']
+        else:
+            self.pl = 0
+
         self.mtu = 100 #series 1 doesn't support NP, and is always 100
         self.on_energy = None
 
@@ -86,7 +91,8 @@ class XBeeDevice:
 
         # remove this to use default power level.
         self.log.warn("Check power levels!!!!!")
-        self.send_cmd("at", command=b'PL', parameter=b'\x00')
+        self.send_cmd("at", command=b'PL',
+                      parameter=struct.pack("B", self.pl))
         self.send_cmd("at", command=b'PL')
 
         # self.send_cmd("at", command=b'PM', parameter=b'\x01')
@@ -305,6 +311,9 @@ class XBeeDevice:
             return 0
     def _on_rx(self, pkt):
         self.log.debug("xbee rx [{:x}, {}]: {}".format(self.address, pkt['id'], pkt))
+
+        if 'rssi' in pkt:
+            self.rssi_history.append(-struct.unpack("B", pkt['rssi'])[0])
 
         try:
             self._lock.acquire()

@@ -51,8 +51,8 @@ class XTPClient():
             logging.warn("RX -- unknown message format ({:x})".format(data[0]))
 
 
-    def __init__(self, portstr, xbeeclass):
-        self.xbee = XBeeDevice(portstr, self.rx, xbeeclass)
+    def __init__(self, portstr, xbeeclass, **kwargs):
+        self.xbee = XBeeDevice(portstr, self.rx, xbeeclass, **kwargs)
         #self.xbee.send_cmd("at", command=b'MY', parameter=b'\x16\x16')
 
         logging.info("my address: {:x}".format(self.xbee.address))
