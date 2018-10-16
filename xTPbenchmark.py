@@ -64,7 +64,8 @@ def bench(send_dev = None, archive_path="./tmp", receive_dev=None, baud=38400, o
 
         result = {}
         for tries in range(16):
-            for cs in [1,2,4,8,16,32,64]:
+            #for cs in [1,2,4,8,16,32,64]:
+            for cs in [64,32,16,8,4,2,1]:
 
                 testfile= 'test-1M.dat'
                 chunksize = 1024*cs
@@ -76,8 +77,10 @@ def bench(send_dev = None, archive_path="./tmp", receive_dev=None, baud=38400, o
                     st['when'] = datetime.now(timezone.utc)
                     st['filename'] = testfile
                     st['chunksize'] = chunksize
-                    st['tx_rssi'] = tx.xbee.rssi_history
-                    st['rx_rssi'] = rx.xbee.rssi_history
+                    if send_dev:
+                        st['tx_rssi'] = tx.xbee.rssi_history
+                    if receive_dev:
+                        st['rx_rssi'] = rx.xbee.rssi_history
                     st['seconds'] = (end - start).total_seconds()
                     st['rate'] = st['frag_total_bytes'] / st['seconds']
                     collect.insert_one(st)
@@ -93,13 +96,7 @@ def bench(send_dev = None, archive_path="./tmp", receive_dev=None, baud=38400, o
                             tx.xbee.close()
                         except:
                             pass
-                        print("="*80)
-                        for cs, r in result.items():
-                            print("-"*80)
-                            print("{}K".format(cs))
-                            print(", ".join(["{}".format(z[0]) for z in r]))
-                            print(", ".join(["{}".format(z[1]) for z in r]))
-                            print(", ".join(["{}".format(z[2]) for z in r]))
+
                         exit(-7)
                     continue
                 except XBeeDied:
@@ -112,13 +109,7 @@ def bench(send_dev = None, archive_path="./tmp", receive_dev=None, baud=38400, o
                         tx.xbee.close()
                     except:
                         pass
-                    print("="*80)
-                    for cs, r in result.items():
-                        print("-"*80)
-                        print("{}K".format(cs))
-                        print(", ".join(["{}".format(z[0]) for z in r]))
-                        print(", ".join(["{}".format(z[1]) for z in r]))
-                        print(", ".join(["{}".format(z[2]) for z in r]))
+
                     exit(-6)
                 except KeyboardInterrupt:
                     print("Ctrl-C, exit")
@@ -131,29 +122,12 @@ def bench(send_dev = None, archive_path="./tmp", receive_dev=None, baud=38400, o
                         tx.xbee.close()
                     except:
                         pass
-                    print("="*80)
-                    for cs, r in result.items():
-                        print("-"*80)
-                        print("{}K".format(cs))
-                        print(", ".join(["{}".format(z[0]) for z in r]))
-                        print(", ".join(["{}".format(z[1]) for z in r]))
-                        print(", ".join(["{}".format(z[2]) for z in r]))
+
                     exit(-5)
 
 
                 print (st)
-                if (r):
-                    if cs in result:
-                        result[cs] += [ (end-start,
-                                         tx.xbee.avg_rssi(),
-                                         rx.xbee.avg_rssi()) ]
-                    else:
-                        result[cs] = [ (end-start,
-                                        tx.xbee.avg_rssi(),
-                                        rx.xbee.avg_rssi()) ]
-                else:
-                    print("{}K = {}. Avg tx RSSI: {}, avg rx RSSI: {}".format(
-                        cs, "Failed! ()", tx.xbee.avg_rssi(), rx.xbee.avg_rssi()))
+
 
     #
     # print("="*80)
@@ -176,6 +150,12 @@ if __name__=="__main__":
 
 
     p = argparse.ArgumentParser()
+    p.add_argument("-rxd", "--rx_device",
+                   help="recieve device",
+                   default = None)
+    p.add_argument("-txd", "--tx_device",
+                   help="transmit device",
+                   default = None)
     p.add_argument("-d", "--debug",
                    help="debug level",
                    choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
@@ -220,18 +200,19 @@ if __name__=="__main__":
         # may have to add extra descrition checks here...
         if 'FT232' in desc and len(ports) >= num_xbees[args.mode]:
             p = ports
+
             break
     if (p):
         print('using {} ({})'.format(p, desc))
         if (ok()):
             try:
                 if args.mode == 'send':
-                    bench(send_dev = p[0], **vars(args))
+                    bench(send_dev = args.tx_device if args.tx_device else p[0], **vars(args))
                 elif args.mode =='receive':
-                    bench(receive_dev = p[0], **vars(args))
+                    bench(receive_dev = args.rx_device if args.rx_device else p[0], **vars(args))
                 else:
-                    bench(send_dev = p[0],
-                          receive_dev = p[1], **vars(args))
+                    bench(send_dev = args.tx_device if args.tx_device else p[0],
+                          receive_dev = args.rx_device if args.rx_device else p[1], **vars(args))
             except TimeoutError:
                 print("Benchmark failed due to timeout communicating with radio, check USB cables.")
 
